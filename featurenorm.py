@@ -5,6 +5,7 @@ import optparse
 import itertools
 import numpy as np
 
+
 class FeatureEngineer():
     def __init__(self, dstrain, dstest, N, **kwargs):
         # Features and targets.
