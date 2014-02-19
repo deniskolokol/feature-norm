@@ -8,9 +8,13 @@ import numpy as np
 
 class FeatureEngineer():
     def __init__(self, dstrain, dstest, N, **kwargs):
-        # Features and targets.
-        self.X = None 
-        self.Y = None
+        self.X = None # Features.
+        self.Y = None # Targets.
+        self.N = None # Number of examples.
+
+        # Filenames.
+        self.fname_train = dstrain
+        self.fname_test = dstest
 
         # Fill training and testing datasets.
         self.ds_train = self.fill_ndarray(dstrain, N, **kwargs)
@@ -38,6 +42,7 @@ class FeatureEngineer():
 
             if nlines < 0:
                 nlines = file_len(f)
+            self.N = nlines # Update number of examples
 
             return np.ndfromtxt(itertools.islice(f, nlines),
                                 dtype=float,
@@ -46,6 +51,7 @@ class FeatureEngineer():
                                 usecols=range(skipcols, num_cols),
                                 missing_values=missing_values,
                                 filling_values=filling_values)
+
 
     def prepare_data(self, target_cols=1):
         """
@@ -57,22 +63,17 @@ class FeatureEngineer():
         self.Y = np.reshape(self.Y, (target_cols, self.Y.shape[0]))
 
     def remove_correlated_features(self):
-        """
-        """
         # TO-DO: Reshape each pair of columns into a separate ndarray,
-        # use 
         # remove all with covariance > 0.95
         pass
 
+    def remove_unary_cols(self):
+        unary_cols = np.all(self.X == self.X[0, :], axis=0)
+        indices = [i for i in range(len(unary_cols)) if unary_cols[i]]
+        self.X = np.delete(self.X, indices, axis=1)
+
     def normalize_features(self):
-        """
-        I = Imin + (Imax - Imin) * (D - Dmin) / (Dmax - Dmin)
-        """
-        # WARNING! This doesn't work well, re-work to optimized colums-oriented normalization
-        i_min, i_max = -1, 1
-        d_min = self.X.min()
-        d_max = self.X.max()
-        self.normalized = i_min + (i_max - i_min) * (self.X - d_min) / (d_max - d_min)
+        self.X /= np.max(np.abs(self.X), axis=0)
 
 
 def main(csv_train, csv_test, **kwargs):
@@ -82,15 +83,20 @@ def main(csv_train, csv_test, **kwargs):
         N = -1
     params = {'skiprows': kwargs.get('skiprows', 0),
               'skipcols': kwargs.get('skipcols', 0)}
-    
+
     fex = FeatureEngineer(csv_train, csv_test, int(N), **params)
     fex.prepare_data()
     fex.remove_correlated_features()
+    fex.remove_unary_cols()
     fex.normalize_features()
 
-    print 'X', fex.X
-    print 'Y', fex.Y
-    print 'Norm', fex.normalized
+    result = np.zeros((fex.X.shape[0], fex.X.shape[1] + 1))
+    result[:, :fex.X.shape[1]] = fex.X
+    result[:, -1] = fex.Y
+
+    np.savetxt(fex.fname_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.N),
+               result,
+               delimiter=" ")
 
 
 if __name__ == '__main__':
@@ -128,8 +134,8 @@ if __name__ == '__main__':
         print >> sys.stderr, 'Both files with training and test datasets should be specified!'
         sys.exit()
 
-    kwargs = {'skiprows': opts.skiprows,
-              'skipcols': opts.skipcols,
+    kwargs = {'skiprows': int(opts.skiprows),
+              'skipcols': int(opts.skipcols),
               'N': opts.n_examples}
 
     main(csv_train, csv_test, **kwargs)
