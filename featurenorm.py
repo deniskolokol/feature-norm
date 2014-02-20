@@ -17,10 +17,16 @@ class FeatureEngineer():
         self.fname_test = dstest
 
         # Fill training and testing datasets.
-        self.ds_train = self.fill_ndarray(dstrain, N, **kwargs)
-        self.ds_test = self.fill_ndarray(dstest,  N, **kwargs)
+        self.ds_train = self.fill_ndarray(dstrain,
+                                          nlines=N,
+                                          trainset=True,
+                                          **kwargs)
+        self.ds_test = self.fill_ndarray(dstest,
+                                         nlines=N,
+                                         trainset=False,
+                                         **kwargs)
 
-    def fill_ndarray(self, filename, nlines=None, **kwargs):
+    def fill_ndarray(self, filename, nlines=None, trainset=False, **kwargs):
         """
         Extract data from file to a single big ndarray.
         """
@@ -33,10 +39,9 @@ class FeatureEngineer():
             skiprows = kwargs.get('skiprows', 0)
             skipcols = kwargs.get('skipcols', 0)
 
-            # number of columns.
+            # Number of columns.
             num_cols = len(f.readline().split(delimiter))
-            f.seek(0)
-            
+
             missing_values = tuple(["NA" for i in range(num_cols - skipcols)])
             filling_values = tuple([0 for i in range(num_cols - skipcols)])
 
@@ -44,23 +49,38 @@ class FeatureEngineer():
                 nlines = file_len(f)
             self.N = nlines # Update number of examples
 
-            return np.ndfromtxt(itertools.islice(f, nlines),
+            f.seek(0)
+            data = np.ndfromtxt(itertools.islice(f, nlines),
                                 dtype=float,
                                 skiprows=skiprows,
                                 delimiter=delimiter,
                                 usecols=range(skipcols, num_cols),
                                 missing_values=missing_values,
                                 filling_values=filling_values)
+            if trainset:
+                # We need features data as float ndarray
+                # (which is in `data` now), while classes (last column)
+                # should be int, thus read it separately from the rest.
 
+                self.X = data[:, :-1]
+                f.seek(0) # Put cursor back in the beginning.
+                self.Y = np.ndfromtxt(itertools.islice(f, nlines),
+                                      dtype=int,
+                                      skiprows=skiprows,
+                                      delimiter=delimiter,
+                                      usecols=num_cols-1)
+            return data
 
     def prepare_data(self, target_cols=1):
         """
         Extract features and target from data.
         `target_cols` is a dimensionality of target vector (default 1).
         """
-        self.X = self.ds_train[:, :np.negative(target_cols)]
-        self.Y = self.ds_train[:, np.negative(target_cols):]
-        self.Y = np.reshape(self.Y, (target_cols, self.Y.shape[0]))
+        if self.X is None:
+            self.X = self.ds_train[:, :np.negative(target_cols)]
+            self.Y = self.ds_train[:, np.negative(target_cols):]
+        if self.Y is None:
+            self.Y = np.reshape(self.Y, (target_cols, self.Y.shape[0]))
 
     def remove_correlated_features(self):
         # TO-DO: Reshape each pair of columns into a separate ndarray,
@@ -77,7 +97,6 @@ class FeatureEngineer():
 
 
 def main(csv_train, csv_test, **kwargs):
-
     N = kwargs.get('N', None)
     if N is None:
         N = -1
@@ -94,8 +113,14 @@ def main(csv_train, csv_test, **kwargs):
     result[:, :fex.X.shape[1]] = fex.X
     result[:, -1] = fex.Y
 
+    # M-1 columns (features) should be float,
+    # but the last one (classes) int.
+    fmt = ['%.8e' for i in range(result.shape[1]-1)]
+    fmt.append('%d')
+
     np.savetxt(fex.fname_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.N),
                result,
+               fmt=' '.join(fmt),
                delimiter=" ")
 
 
