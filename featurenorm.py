@@ -7,26 +7,36 @@ import numpy as np
 
 
 class FeatureEngineer():
+    functions = {
+        'unary': lambda a: np.all(a == a[0, :], axis=0),
+        'correlated': lambda a: [np.unique(np.cov(a[:, [n, n-1]].T)).size == 1
+                                 for n in xrange(1, a.shape[1])],
+        }
+
     def __init__(self, dstrain, dstest, N, **kwargs):
-        self.X = None # Features.
-        self.Y = None # Targets.
-        self.N = None # Number of examples.
+        # Number of examples.
+        self.N = None
 
-        # Filenames.
-        self.fname_train = dstrain
-        self.fname_test = dstest
+        # TO-DO: 
+        # Optimize here: 'sniff' read both files first and fill datasets metadata:
+        # file object / slice, number of rows, number of columns, etc.
+        # Only after that fill self.X, self.Y and self.test.
 
-        # Fill training and testing datasets.
-        self.ds_train = self.fill_ndarray(dstrain,
-                                          nlines=N,
-                                          trainset=True,
-                                          **kwargs)
-        self.ds_test = self.fill_ndarray(dstest,
-                                         nlines=N,
-                                         trainset=False,
-                                         **kwargs)
+        # Fill training dataset (X).
+        self.X = self.fill_array(dstrain, nlines=N, **kwargs)[:, :-1]
 
-    def fill_ndarray(self, filename, nlines=None, trainset=False, **kwargs):
+        # Target vector (Y) - the last column of training dataset (integer!).
+        t_kwargs = kwargs.copy()
+        t_kwargs.update({'dtype': int, 'usecols': -1})
+        self.Y = self.fill_array(dstrain, nlines=N, **t_kwargs)
+
+        # Target is a R-vector.
+        self.Y = np.reshape(self.Y, (1, self.Y.shape[0]))
+
+        # Test datasets.
+        self.ds_test = self.fill_array(dstest, nlines=N, **kwargs)
+
+    def fill_array(self, filename, nlines=None, dtype=float, **kwargs):
         """
         Extract data from file to a single big ndarray.
         """
@@ -37,77 +47,82 @@ class FeatureEngineer():
         with open(filename, 'rb') as f:
             delimiter = kwargs.get('delimiter', ',')
             skiprows = kwargs.get('skiprows', 0)
-            skipcols = kwargs.get('skipcols', 0)
 
-            # Number of columns.
+            # Total number of columns.
             num_cols = len(f.readline().split(delimiter))
 
-            missing_values = tuple(["NA" for i in range(num_cols - skipcols)])
-            filling_values = tuple([0 for i in range(num_cols - skipcols)])
+            # Use columns defined by indexes.
+            usecols = kwargs.get('usecols', None)
+            if not usecols:
 
+                # Skip columns from left side.
+                skipcols = kwargs.get('skipcols', 0)
+                usecols=range(skipcols, num_cols)
+
+            # Ensure list to 
+            if isinstance(usecols, int):
+                usecols = [usecols]
+            missing_values = tuple(["NA" for i in range(len(usecols))])
+            filling_values = tuple([0 for i in range(len(usecols))])
+
+            # Number of examples.
             if nlines < 0:
                 nlines = file_len(f)
-            self.N = nlines # Update number of examples
+            self.N = nlines
 
             f.seek(0)
-            data = np.ndfromtxt(itertools.islice(f, nlines),
-                                dtype=float,
+            return np.ndfromtxt(itertools.islice(f, nlines),
+                                dtype=dtype,
                                 skiprows=skiprows,
                                 delimiter=delimiter,
-                                usecols=range(skipcols, num_cols),
+                                usecols=usecols,
                                 missing_values=missing_values,
                                 filling_values=filling_values)
-            if trainset:
-                # We need features data as float ndarray
-                # (which is in `data` now), while classes (last column)
-                # should be int, thus read it separately from the rest.
 
-                self.X = data[:, :-1]
-                f.seek(0) # Put cursor back in the beginning.
-                self.Y = np.ndfromtxt(itertools.islice(f, nlines),
-                                      dtype=int,
-                                      skiprows=skiprows,
-                                      delimiter=delimiter,
-                                      usecols=num_cols-1)
-            return data
+    def _remove_cols_under_condition(self, cond):
+        try:
+            func = self.functions[cond]
+        except KeyError:
+            return
 
-    def prepare_data(self, target_cols=1):
-        """
-        Extract features and target from data.
-        `target_cols` is a dimensionality of target vector (default 1).
-        """
-        if self.X is None:
-            self.X = self.ds_train[:, :np.negative(target_cols)]
-            self.Y = self.ds_train[:, np.negative(target_cols):]
-        if self.Y is None:
-            self.Y = np.reshape(self.Y, (target_cols, self.Y.shape[0]))
+        i_X = func(self.X)
+        i_test = func(self.ds_test)
 
-    def remove_correlated_features(self):
-        # TO-DO: Reshape each pair of columns into a separate ndarray,
-        # remove all with covariance > 0.95
-        pass
+        # Take only columns that satisfy condition in both datasets.
+        indices = [i for i in range(len(i_X)) if i_X[i] and i_test[i]]
+
+        # Remove features from both train and test sets.
+        self.X = np.delete(self.X, indices, axis=1)
+        self.ds_test = np.delete(self.ds_test, indices, axis=1)
 
     def remove_unary_cols(self):
-        unary_cols = np.all(self.X == self.X[0, :], axis=0)
-        indices = [i for i in range(len(unary_cols)) if unary_cols[i]]
-        self.X = np.delete(self.X, indices, axis=1)
+        """
+        Removes features with no variance in the data.
+        """
+        self._remove_cols_under_condition('unary')
+
+    def remove_correlated_features(self):
+        """
+        Removes features highly correlated with other features.
+        """
+        self._remove_cols_under_condition('correlated')
 
     def normalize_features(self):
+        """
+        Normalizes features in the training set.
+        """
         self.X /= np.max(np.abs(self.X), axis=0)
 
 
 def main(csv_train, csv_test, **kwargs):
-    N = kwargs.get('N', None)
+    N = kwargs.pop('N', None)
     if N is None:
         N = -1
-    params = {'skiprows': kwargs.get('skiprows', 0),
-              'skipcols': kwargs.get('skipcols', 0)}
 
-    fex = FeatureEngineer(csv_train, csv_test, int(N), **params)
-    fex.prepare_data()
-    fex.remove_correlated_features()
+    fex = FeatureEngineer(csv_train, csv_test, int(N), **kwargs)
     fex.remove_unary_cols()
-    fex.normalize_features()
+    fex.remove_correlated_features()
+    # fex.normalize_features()
 
     result = np.zeros((fex.X.shape[0], fex.X.shape[1] + 1))
     result[:, :fex.X.shape[1]] = fex.X
@@ -118,7 +133,7 @@ def main(csv_train, csv_test, **kwargs):
     fmt = ['%.8e' for i in range(result.shape[1]-1)]
     fmt.append('%d')
 
-    np.savetxt(fex.fname_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.N),
+    np.savetxt(csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.N),
                result,
                fmt=' '.join(fmt),
                delimiter=" ")
@@ -133,22 +148,20 @@ if __name__ == '__main__':
     cmdparser.add_option("-r", "--skiprows",
                          action="store",
                          dest="skiprows",
-                         default=1,
+                         default=0,
                          help="Skip rows [default \'%default\'] - do not include header")
     cmdparser.add_option("-c", "--skipcolumnns",
                          action="store",
                          dest="skipcols",
-                         default=1,
+                         default=0,
                          help="Skip columns [default \'%default\'] - do not include row id")
     cmdparser.add_option("-t", "--train",
                          action="store",
                          dest="csv_train",
-                         default=1,
                          help="Training dataset (csv file)")
     cmdparser.add_option("-s", "--test",
                          action="store",
                          dest="csv_test",
-                         default=1,
                          help="Test dataset (csv file)")
     opts, args = cmdparser.parse_args()
 
