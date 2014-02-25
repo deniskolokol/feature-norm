@@ -17,33 +17,24 @@ class FeatureEngineer():
         # Number of examples.
         self.N = None
 
-        # TO-DO: 
-        # Optimize here: 'sniff' read both files first and fill datasets metadata:
-        # file object / slice, number of rows, number of columns, etc.
-        # Only after that fill self.X, self.Y and self.test.
-
         # Fill training dataset (X).
-        self.X = self.fill_array(dstrain, nlines=N, **kwargs)[:, :-1]
+        self.X = self.from_txt(dstrain, nlines=N, **kwargs)[:, :-1]
 
         # Target vector (Y) - the last column of training dataset (integer!).
         t_kwargs = kwargs.copy()
         t_kwargs.update({'dtype': int, 'usecols': -1})
-        self.Y = self.fill_array(dstrain, nlines=N, **t_kwargs)
+        self.Y = self.from_txt(dstrain, nlines=N, **t_kwargs)
 
         # Target is a R-vector.
         self.Y = np.reshape(self.Y, (1, self.Y.shape[0]))
 
         # Test datasets.
-        self.ds_test = self.fill_array(dstest, nlines=N, **kwargs)
+        self.ds_test = self.from_txt(dstest, nlines=N, **kwargs)
 
-    def fill_array(self, filename, nlines=None, dtype=float, **kwargs):
+    def from_txt(self, filename, nlines=None, dtype=float, **kwargs):
         """
         Extract data from file to a single big ndarray.
         """
-        def file_len(f):
-            for i, l in enumerate(f): pass
-            return i + 1
-
         with open(filename, 'rb') as f:
             delimiter = kwargs.get('delimiter', ',')
             skiprows = kwargs.get('skiprows', 0)
@@ -59,26 +50,24 @@ class FeatureEngineer():
                 skipcols = kwargs.get('skipcols', 0)
                 usecols=range(skipcols, num_cols)
 
-            # Ensure list to 
+            # Ensure list. 
             if isinstance(usecols, int):
                 usecols = [usecols]
-            missing_values = tuple(["NA" for i in range(len(usecols))])
-            filling_values = tuple([0 for i in range(len(usecols))])
 
             # Number of examples.
-            if nlines < 0:
-                nlines = file_len(f)
-            self.N = nlines
-
             f.seek(0)
-            return np.ndfromtxt(itertools.islice(f, nlines),
+            if nlines > 0:
+                f = itertools.islice(f, nlines + skiprows)
+            data = np.ndfromtxt(f,
                                 dtype=dtype,
                                 skiprows=skiprows,
                                 delimiter=delimiter,
-                                usecols=usecols,
-                                missing_values=missing_values,
-                                filling_values=filling_values)
+                                usecols=usecols)
+            return np.nan_to_num(data)
 
+    def to_txt(self, filename, arr, **kwargs):
+        np.savetxt(filename, arr, **kwargs)
+        
     def _remove_cols_under_condition(self, cond):
         try:
             func = self.functions[cond]
@@ -111,6 +100,9 @@ class FeatureEngineer():
         """
         Normalizes features in the training set.
         """
+        m = np.max(np.abs(self.X), axis=0) == 0
+        self.X = np.delete(self.X, np.where(m==True)[0], axis=1)
+
         self.X /= np.max(np.abs(self.X), axis=0)
 
 
@@ -122,21 +114,20 @@ def main(csv_train, csv_test, **kwargs):
     fex = FeatureEngineer(csv_train, csv_test, int(N), **kwargs)
     fex.remove_unary_cols()
     fex.remove_correlated_features()
-    # fex.normalize_features()
+    fex.normalize_features()
 
     result = np.zeros((fex.X.shape[0], fex.X.shape[1] + 1))
     result[:, :fex.X.shape[1]] = fex.X
     result[:, -1] = fex.Y
 
-    # M-1 columns (features) should be float,
-    # but the last one (classes) int.
-    fmt = ['%.8e' for i in range(result.shape[1]-1)]
+    # M-1 columns (features) should be float, but the last one (classes) int.
+    fmt = ['%.8e' for i in range(result.shape[1 ]-1)]
     fmt.append('%d')
 
-    np.savetxt(csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.N),
-               result,
-               fmt=' '.join(fmt),
-               delimiter=" ")
+    kw = {'fmt': ' '.join(fmt), 'delimiter': ' '}
+    fname = csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.X.shape[0])
+
+    fex.to_txt(fname, result, **kw)
 
 
 if __name__ == '__main__':
