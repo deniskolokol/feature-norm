@@ -1,6 +1,7 @@
 # /usr/bin/python
 
 import sys
+import csv
 import optparse
 import itertools
 import numpy as np
@@ -13,7 +14,7 @@ class FeatureEngineer():
                                  for n in xrange(1, a.shape[1])],
         }
 
-    def __init__(self, dstrain, dstest, N, **kwargs):
+    def __init__(self, dstrain, dstest=None, N=1, **kwargs):
         # Number of examples.
         self.N = None
 
@@ -29,7 +30,8 @@ class FeatureEngineer():
         self.Y = np.reshape(self.Y, (1, self.Y.shape[0]))
 
         # Test datasets.
-        self.ds_test = self.from_txt(dstest, nlines=N, **kwargs)
+        if dstest:
+            self.ds_test = self.from_txt(dstest, nlines=N, **kwargs)
 
     def from_txt(self, filename, nlines=None, dtype=float, **kwargs):
         """
@@ -100,10 +102,13 @@ class FeatureEngineer():
         """
         Normalizes features in the training set.
         """
-        m = np.max(np.abs(self.X), axis=0) == 0
-        self.X = np.delete(self.X, np.where(m==True)[0], axis=1)
+        # m = np.max(np.abs(self.X), axis=0) == 0
+        # self.X = np.delete(self.X, np.where(m==True)[0], axis=1)
 
         self.X /= np.max(np.abs(self.X), axis=0)
+
+        # Fix for zero-valued unary fields.
+        self.X = np.nan_to_num(self.X)
 
 
 def main(csv_train, csv_test, **kwargs):
