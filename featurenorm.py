@@ -116,23 +116,66 @@ def main(csv_train, csv_test, **kwargs):
     if N is None:
         N = -1
 
-    fex = FeatureEngineer(csv_train, csv_test, int(N), **kwargs)
-    fex.remove_unary_cols()
-    fex.remove_correlated_features()
-    fex.normalize_features()
+    # Original
+    # fex = FeatureEngineer(csv_train, csv_test, int(N), **kwargs)
+    # fex.remove_unary_cols()
+    # fex.remove_correlated_features()
+    # fex.normalize_features()
 
-    result = np.zeros((fex.X.shape[0], fex.X.shape[1] + 1))
-    result[:, :fex.X.shape[1]] = fex.X
-    result[:, -1] = fex.Y
+    # result = np.zeros((fex.X.shape[0], fex.X.shape[1] + 1))
+    # result[:, :fex.X.shape[1]] = fex.X
+    # result[:, -1] = fex.Y
 
-    # M-1 columns (features) should be float, but the last one (classes) int.
-    fmt = ['%.8e' for i in range(result.shape[1 ]-1)]
-    fmt.append('%d')
+    # # M-1 columns (features) should be float, but the last one (classes) int.
+    # fmt = ['%.8e' for i in range(result.shape[1 ]-1)]
+    # fmt.append('%d')
 
-    kw = {'fmt': ' '.join(fmt), 'delimiter': ' '}
-    fname = csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.X.shape[0])
+    # kw = {'fmt': ' '.join(fmt), 'delimiter': ' '}
+    # fname = csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % fex.X.shape[0])
 
-    fex.to_txt(fname, result, **kw)
+    # fex.to_txt(fname, result, **kw)
+
+
+    # TEST
+    def add_Y(arr, y):
+        res = np.zeros((arr.shape[0], arr.shape[1] + 1))
+        res[:, :arr.shape[1]] = arr
+        res[:, -1] = y
+        return res
+
+    result = None
+    n = 1000 # Iterations.
+    out_class = [50, 1000, 1500] # Num of records with output [==0, <50%, >50%]
+    skiprows = kwargs.get('skiprows', 1)
+    for i in range(n):
+        cl = i % len(out_class)
+        kwargs.update({'skiprows': skiprows})
+
+        fex = FeatureEngineer(csv_train, N=out_class[cl], **kwargs)
+        fex.normalize_features()
+        res = add_Y(fex.X, fex.Y)
+
+        if cl == 0:
+            res = res[res[:,-1] == 0, :]
+        elif cl == 1:
+            res = res[np.logical_and(res[:,-1] > 0, res[:,-1] <= 50), :]
+        elif cl == 2:
+            res = res[res[:,-1] > 50, :]
+
+        try:
+            result = np.append(result, res, axis=0)
+        except ValueError:
+            result = res
+
+        print i, ':', cl, res.shape, result.shape
+
+        skiprows += out_class[cl]
+
+    np.random.shuffle(result)
+    fname = csv_train.rsplit('.', 1)[0] + ('_clean_%s.csv' % result.shape[0])
+    with open(fname, 'wb') as f:
+        csv.writer(f).writerows(result)
+
 
 
 if __name__ == '__main__':
